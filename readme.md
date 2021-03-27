@@ -1,6 +1,6 @@
 # wavv
-[![Actions Status](https://github.com/samuelleeuwenburg/wavv/workflows/wavv/badge.svg)](https://github.com/samuelleeuwenburg/wavv/actions)
-[![Crates.io](https://img.shields.io/crates/v/.svg)](https://crates.io/crates/wavv)
+[![.github/workflows/main.yml](https://github.com/samuelleeuwenburg/wavv/actions/workflows/main.yml/badge.svg)](https://github.com/samuelleeuwenburg/wavv/actions/workflows/main.yml)
+[![Crates.io](https://img.shields.io/crates/v/wavv.svg)](https://crates.io/crates/wavv)
 
 Basic `#![no_std]` library for reading wav files
 
