@@ -5,5 +5,6 @@ authors = ["Samuel Leeuwenburg <samleeuwenburg@gmail.com>"]
 edition = "2018"
 description = "no_std library for reading wav files"
 repository = "https://github.com/samuelleeuwenburg/wavv"
+documentation = "https://docs.rs/wavv"
 license = "Apache-2.0"
 keywords = ["audio", "wav", "no_std"]
