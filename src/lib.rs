@@ -2,19 +2,18 @@
 //!
 //! **NOTE! this library is unfinished, incomplete and still contains bugs!**
 //!
-//! ```rust
+//! ```
 //! use std::fs;
 //! use std::path::Path;
 //! use wavv::{Wave, Samples};
 //!
 //! fn main() {
-//!     let bytes = fs::read(Path::new("./test_files/sine_mono.wav")).unwrap();
+//!     let bytes = fs::read(Path::new("./test_files/sine_stereo_16_48000.wav")).unwrap();
 //! 	let wave = Wave::from_bytes(&bytes).unwrap();
 //!
-//!     println!(
-//!         "sample rate: {}, channels: {}, bit depth: {}",
-//!         wave.format.sample_rate, wave.format.bit_depth, wave.format.num_channels
-//!     );
+//!     assert_eq!(wave.header.num_channels, 2);
+//!     assert_eq!(wave.header.bit_depth, 16);
+//!     assert_eq!(wave.header.sample_rate, 48_000);
 //!
 //!     match wave.data {
 //!         Samples::BitDepth8(samples) => println!("{:?}", samples),
@@ -32,4 +31,4 @@ extern crate alloc;
 mod parsing;
 mod wave;
 
-pub use wave::{Format, Samples, Wave};
+pub use wave::{Error, Header, Samples, Wave};

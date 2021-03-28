@@ -3,51 +3,86 @@ use alloc::vec::Vec;
 use core::array::TryFromSliceError;
 use core::convert::TryInto;
 
+/// Error type for different parsing failures
 #[derive(Debug, Clone)]
 pub enum Error {
+    /// Unknown or unsupported Chunk ID
     UnknownChunkID([u8; 4]),
-    CantParseSamples(TryFromSliceError),
-    CantReadChunkID,
-    CantReadChunkSize,
-    CantReadNumChannels,
-    CantReadSampleRate,
-    CantReadBitDepth,
+    /// Failed parsing slice into specific bytes
+    CantParseSliceInto(TryFromSliceError),
+    /// no riff chunk found in header of file
     NoRiffChunkFound,
+    /// no data chunk found in file
     NoDataChunkFound,
+    /// no fmt/header chunk found in file
     NoFmtChunkFound,
-    UnsupportedBitDepth,
+    /// unsupported bit depth
+    UnsupportedBitDepth(u16),
 }
 
+/// Enum to hold samples for different bit depth
 #[derive(Debug, PartialEq)]
 pub enum Samples {
+    /// 8 bit audio
     BitDepth8(Vec<u8>),
+    /// 16 bit audio
     BitDepth16(Vec<i16>),
+    /// 24 bit audio
     BitDepth24(Vec<i32>),
 }
 
+/// Struct representing the header section of a .wav file
+///
+/// for more information see [`here`]
+///
+/// [`here`]: http://soundfile.sapp.org/doc/WaveFormat/
 #[derive(Debug, Clone)]
-pub struct Format {
+pub struct Header {
+    /// sample rate, typical values are `44_100`, `48_000` or `96_000`
     pub sample_rate: u32,
+    /// number of audio channels in the sample data, channels are interleaved
     pub num_channels: u16,
+    /// bit depth for each sample, typical values are `16` or `24`
     pub bit_depth: u16,
 }
 
+/// Struct representing a .wav file
 #[derive(Debug)]
 pub struct Wave {
-    pub format: Format,
+    /// Contains data from the fmt chunk / header part of the file
+    pub header: Header,
+    /// Contains audio data as samples of a fixed bit depth
     pub data: Samples,
 }
 
 impl Wave {
+    /// Create new [`Wave`] instance from a slice of bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use std::path::Path;
+    /// use wavv::Wave;
+    ///
+    /// fn main() {
+    ///     let bytes = fs::read(Path::new("./test_files/sine_mono_16_44100.wav")).unwrap();
+    ///     let wave = Wave::from_bytes(&bytes).unwrap();
+    ///
+    ///     assert_eq!(wave.header.num_channels, 1);
+    ///     assert_eq!(wave.header.bit_depth, 16);
+    ///     assert_eq!(wave.header.sample_rate, 44_100);
+    /// }
+    /// ```
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let riff = bytes[0..4]
             .try_into()
-            .map_err(|_| Error::CantReadChunkID)
+            .map_err(|e| Error::CantParseSliceInto(e))
             .and_then(|b| parse_chunk_id(b))?;
 
         let file_size = bytes[4..8]
             .try_into()
-            .map_err(|_| Error::CantReadChunkSize)
+            .map_err(|e| Error::CantParseSliceInto(e))
             .map(|b| u32::from_le_bytes(b))?;
 
         if riff != ChunkID::RIFF {
@@ -88,9 +123,9 @@ mod tests {
 
         let wave = Wave::from_bytes(&bytes).unwrap();
 
-        assert_eq!(wave.format.sample_rate, 22050);
-        assert_eq!(wave.format.bit_depth, 16);
-        assert_eq!(wave.format.num_channels, 2);
+        assert_eq!(wave.header.sample_rate, 22050);
+        assert_eq!(wave.header.bit_depth, 16);
+        assert_eq!(wave.header.num_channels, 2);
 
         assert_eq!(
             wave.data,
@@ -127,9 +162,9 @@ mod tests {
 
         let wave = Wave::from_bytes(&bytes).unwrap();
 
-        assert_eq!(wave.format.sample_rate, 44100);
-        assert_eq!(wave.format.bit_depth, 24);
-        assert_eq!(wave.format.num_channels, 1);
+        assert_eq!(wave.header.sample_rate, 44100);
+        assert_eq!(wave.header.bit_depth, 24);
+        assert_eq!(wave.header.num_channels, 1);
 
         assert_eq!(
             wave.data,

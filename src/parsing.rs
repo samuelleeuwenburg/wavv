@@ -1,4 +1,4 @@
-use crate::wave::{Error, Format, Samples, Wave};
+use crate::wave::{Error, Header, Samples, Wave};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::array::TryFromSliceError;
@@ -24,23 +24,23 @@ pub fn parse_chunk_id(id: [u8; 4]) -> Result<ChunkID, Error> {
     }
 }
 
-fn parse_fmt_chunk(bytes: &[u8]) -> Result<Format, Error> {
+fn parse_fmt_chunk(bytes: &[u8]) -> Result<Header, Error> {
     let num_channels = bytes[2..4]
         .try_into()
-        .map_err(|_| Error::CantReadNumChannels)
+        .map_err(|e| Error::CantParseSliceInto(e))
         .map(|b| u16::from_le_bytes(b))?;
 
     let sample_rate = bytes[4..8]
         .try_into()
-        .map_err(|_| Error::CantReadSampleRate)
+        .map_err(|e| Error::CantParseSliceInto(e))
         .map(|b| u32::from_le_bytes(b))?;
 
     let bit_depth = bytes[14..16]
         .try_into()
-        .map_err(|_| Error::CantReadBitDepth)
+        .map_err(|e| Error::CantParseSliceInto(e))
         .map(|b| u16::from_le_bytes(b))?;
 
-    Ok(Format {
+    Ok(Header {
         num_channels,
         sample_rate,
         bit_depth,
@@ -48,7 +48,7 @@ fn parse_fmt_chunk(bytes: &[u8]) -> Result<Format, Error> {
 }
 
 fn read_samples<T, F: Fn(&[u8]) -> Result<T, TryFromSliceError>>(
-    format: &Format,
+    format: &Header,
     bytes: &[u8],
     read_sample: F,
 ) -> Result<Vec<T>, TryFromSliceError> {
@@ -69,14 +69,14 @@ fn read_samples<T, F: Fn(&[u8]) -> Result<T, TryFromSliceError>>(
     Ok(samples)
 }
 
-fn parse_data_chunk(format: &Format, bytes: &[u8]) -> Result<Samples, Error> {
+fn parse_data_chunk(format: &Header, bytes: &[u8]) -> Result<Samples, Error> {
     match format.bit_depth {
         8 => {
             let samples = read_samples(&format, bytes, |b| {
                 b.try_into().map(|b| u8::from_le_bytes(b))
             });
             samples
-                .map_err(|e| Error::CantParseSamples(e))
+                .map_err(|e| Error::CantParseSliceInto(e))
                 .map(|s| Samples::BitDepth8(s))
         }
         16 => {
@@ -84,7 +84,7 @@ fn parse_data_chunk(format: &Format, bytes: &[u8]) -> Result<Samples, Error> {
                 b.try_into().map(|b| i16::from_le_bytes(b))
             });
             samples
-                .map_err(|e| Error::CantParseSamples(e))
+                .map_err(|e| Error::CantParseSliceInto(e))
                 .map(|s| Samples::BitDepth16(s))
         }
         24 => {
@@ -94,10 +94,10 @@ fn parse_data_chunk(format: &Format, bytes: &[u8]) -> Result<Samples, Error> {
                     .map(|b| i32::from_le_bytes(b))
             });
             samples
-                .map_err(|e| Error::CantParseSamples(e))
+                .map_err(|e| Error::CantParseSliceInto(e))
                 .map(|s| Samples::BitDepth24(s))
         }
-        _ => Err(Error::UnsupportedBitDepth),
+        bit_depth => Err(Error::UnsupportedBitDepth(bit_depth)),
     }
 }
 
@@ -107,6 +107,7 @@ pub fn parse_chunks(bytes: &[u8]) -> Result<Wave, Error> {
     let mut format = Err(Error::NoFmtChunkFound);
     let mut data = Err(Error::NoDataChunkFound);
 
+    // @TODO: assume fmt chunk as the first chunk in file
     loop {
         if pos + 8 > bytes.len() {
             break;
@@ -114,12 +115,12 @@ pub fn parse_chunks(bytes: &[u8]) -> Result<Wave, Error> {
 
         let chunk_id = bytes[pos..pos + 4]
             .try_into()
-            .map_err(|_| Error::CantReadChunkID)
+            .map_err(|e| Error::CantParseSliceInto(e))
             .and_then(|b| parse_chunk_id(b))?;
 
         let chunk_size = bytes[pos + 4..pos + 8]
             .try_into()
-            .map_err(|_| Error::CantReadChunkSize)
+            .map_err(|e| Error::CantParseSliceInto(e))
             .map(|b| u32::from_le_bytes(b))?;
 
         let start = pos + 8;
@@ -135,7 +136,7 @@ pub fn parse_chunks(bytes: &[u8]) -> Result<Wave, Error> {
     }
 
     let wave = Wave {
-        format: format?,
+        header: format?,
         data: data?,
     };
 
