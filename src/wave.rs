@@ -21,6 +21,7 @@ pub enum Error {
     NoFmtChunkFound,
     /// unsupported bit depth
     UnsupportedBitDepth(u16),
+    Debug(&'static str),
 }
 
 /// Struct representing the header section of a .wav file
@@ -225,6 +226,21 @@ impl Wave {
     ///     assert_eq!(wave.header.sample_rate, 44_100);
     /// }
     /// ```
+    ///
+    /// ```
+    /// use std::fs;
+    /// use std::path::Path;
+    /// use wavv::{Wave, Samples};
+    ///
+    /// fn main() {
+    ///     // let bytes = fs::read(Path::new("./test_files/but.wav")).unwrap();
+    ///     // let wave = Wave::from_bytes(&bytes).unwrap();
+    ///
+    ///     // assert_eq!(wave.header.num_channels, 2);
+    ///     // assert_eq!(wave.header.bit_depth, 16);
+    ///     // assert_eq!(wave.header.sample_rate, 44_100);
+    /// }
+    /// ```
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let (chunks, unknown_chunks) = parse_chunks(bytes)?;
 
@@ -235,10 +251,21 @@ impl Wave {
             match chunk {
                 Chunk::FMT(h) => header = Ok(h),
                 Chunk::DATA(d) => data = Ok(d),
+                Chunk::LIST(_) => (),
                 // ignore unknown chunks
                 Chunk::Unknown(_, _) => (),
             }
         }
+
+        // if let Some(chunks) = unknown_chunks.as_ref() {
+        //     for chunk in chunks {
+        //         match chunk {
+        //             Chunk::Unknown(ChunkID::LIST, bytes) => Err(Error::Debug("list found!")),
+        //             Chunk::Unknown(ChunkID::INFO, bytes) => Err(Error::Debug("info found!")),
+        //             _ => Ok(()),
+        //         }?
+        //     }
+        // }
 
         let wave = Wave {
             data: data?,
