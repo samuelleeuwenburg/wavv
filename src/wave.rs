@@ -1,4 +1,5 @@
-use crate::parsing::{parse_chunk_id, parse_chunks, ChunkID};
+use crate::parsing::{parse_chunks, Chunk, ChunkID};
+use alloc::vec;
 use alloc::vec::Vec;
 use core::array::TryFromSliceError;
 use core::convert::TryInto;
@@ -10,7 +11,9 @@ pub enum Error {
     UnknownChunkID([u8; 4]),
     /// Failed parsing slice into specific bytes
     CantParseSliceInto(TryFromSliceError),
-    /// no riff chunk found in header of file
+    /// Failed parsing chunk with given id
+    CantParseChunk(ChunkID),
+    /// no data chunk found in file
     NoRiffChunkFound,
     /// no data chunk found in file
     NoDataChunkFound,
@@ -18,17 +21,6 @@ pub enum Error {
     NoFmtChunkFound,
     /// unsupported bit depth
     UnsupportedBitDepth(u16),
-}
-
-/// Enum to hold samples for different bit depth
-#[derive(Debug, PartialEq)]
-pub enum Samples {
-    /// 8 bit audio
-    BitDepth8(Vec<u8>),
-    /// 16 bit audio
-    BitDepth16(Vec<i16>),
-    /// 24 bit audio
-    BitDepth24(Vec<i32>),
 }
 
 /// Struct representing the header section of a .wav file
@@ -46,6 +38,163 @@ pub struct Header {
     pub bit_depth: u16,
 }
 
+impl Header {
+    /// Create new [`Header`] instance from a slice of bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use wavv::Header;
+    ///
+    /// fn main() {
+    ///     let bytes = [
+    ///         0x01, 0x00, // audio format
+    ///         0x01, 0x00, // num channels
+    ///         0x44, 0xac, 0x00, 0x00, // sample rate
+    ///         0x88, 0x58, 0x01, 0x00, // byte rate
+    ///         0x04, 0x00, // block align
+    ///         0x18, 0x00, // bits per sample
+    ///     ];
+    ///
+    ///     let header = Header::from_bytes(&bytes).unwrap();
+    ///
+    ///     assert_eq!(header.num_channels, 1);
+    ///     assert_eq!(header.bit_depth, 24);
+    ///     assert_eq!(header.sample_rate, 44_100);
+    /// }
+    /// ```
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let num_channels = bytes[2..4]
+            .try_into()
+            .map_err(|e| Error::CantParseSliceInto(e))
+            .map(|b| u16::from_le_bytes(b))?;
+
+        let sample_rate = bytes[4..8]
+            .try_into()
+            .map_err(|e| Error::CantParseSliceInto(e))
+            .map(|b| u32::from_le_bytes(b))?;
+
+        let bit_depth = bytes[14..16]
+            .try_into()
+            .map_err(|e| Error::CantParseSliceInto(e))
+            .map(|b| u16::from_le_bytes(b))?;
+
+        Ok(Header {
+            num_channels,
+            sample_rate,
+            bit_depth,
+        })
+    }
+}
+
+/// Enum to hold samples for different bit depth
+#[derive(Debug, PartialEq)]
+pub enum Samples {
+    /// 8 bit audio
+    BitDepth8(Vec<u8>),
+    /// 16 bit audio
+    BitDepth16(Vec<i16>),
+    /// 24 bit audio
+    BitDepth24(Vec<i32>),
+}
+
+impl Samples {
+    /// Create new [`Samples`] instance from a slice of bytes
+    /// this requires a [`Header`] instance to be passed to determine
+    /// the sample size and channel data etc.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use wavv::{Header, Samples};
+    ///
+    /// fn main() {
+    ///     let bytes = [
+    ///         0x01, 0x00, // audio format
+    ///         0x01, 0x00, // num channels
+    ///         0x44, 0xac, 0x00, 0x00, // sample rate
+    ///         0x88, 0x58, 0x01, 0x00, // byte rate
+    ///         0x04, 0x00, // block align
+    ///         0x18, 0x00, // bits per sample
+    ///     ];
+    ///
+    ///     let header = Header::from_bytes(&bytes).unwrap();
+    ///
+    ///     assert_eq!(header.num_channels, 1);
+    ///     assert_eq!(header.bit_depth, 24);
+    ///     assert_eq!(header.sample_rate, 44_100);
+    ///
+    ///     let bytes = [
+    ///         0x00, 0x00, 0x00, // sample 1
+    ///         0x00, 0x24, 0x17, // sample 2
+    ///         0x1e, 0xf3, 0x3c, // sample 3
+    ///         0x13, 0x3c, 0x14, // sample 4
+    ///     ];
+    ///
+    ///     let samples = Samples::from_bytes(&header, &bytes).unwrap();
+    ///
+    ///     assert_eq!(
+    ///         samples,
+    ///         Samples::BitDepth24(vec![
+    ///     	    0x00000000, // sample 1
+    ///     	    0x17240000, // sample 2
+    ///     	    0x3cf31e00, // sample 3
+    ///     	    0x143c1300, // sample 4
+    ///         ])
+    ///     )
+    /// }
+    /// ```
+    pub fn from_bytes(header: &Header, bytes: &[u8]) -> Result<Self, Error> {
+        let mut samples = match header.bit_depth {
+            8 => Ok(Samples::BitDepth8(vec![])),
+            16 => Ok(Samples::BitDepth16(vec![])),
+            24 => Ok(Samples::BitDepth24(vec![])),
+            _ => Err(Error::UnsupportedBitDepth(header.bit_depth)),
+        }?;
+
+        let num_bytes = (header.bit_depth / 8) as usize;
+        let mut pos = 0;
+
+        loop {
+            if pos + num_bytes > bytes.len() {
+                break;
+            }
+            let slice = &bytes[pos..pos + num_bytes];
+
+            match samples {
+                Samples::BitDepth8(ref mut v) => {
+                    let sample = slice
+                        .try_into()
+                        .map_err(|e| Error::CantParseSliceInto(e))
+                        .map(u8::from_le_bytes)?;
+
+                    v.push(sample)
+                }
+                Samples::BitDepth16(ref mut v) => {
+                    let sample = slice
+                        .try_into()
+                        .map_err(|e| Error::CantParseSliceInto(e))
+                        .map(i16::from_le_bytes)?;
+
+                    v.push(sample)
+                }
+                Samples::BitDepth24(ref mut v) => {
+                    let sample = [0, slice[0], slice[1], slice[2]][0..4]
+                        .try_into()
+                        .map_err(|e| Error::CantParseSliceInto(e))
+                        .map(i32::from_le_bytes)?;
+
+                    v.push(sample)
+                }
+            }
+
+            pos += num_bytes;
+        }
+
+        Ok(samples)
+    }
+}
+
 /// Struct representing a .wav file
 #[derive(Debug)]
 pub struct Wave {
@@ -53,6 +202,8 @@ pub struct Wave {
     pub header: Header,
     /// Contains audio data as samples of a fixed bit depth
     pub data: Samples,
+    /// Contains raw chunk data that is either unimplemented or unknown
+    pub unknown_chunks: Option<Vec<Chunk>>,
 }
 
 impl Wave {
@@ -75,21 +226,27 @@ impl Wave {
     /// }
     /// ```
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let riff = bytes[0..4]
-            .try_into()
-            .map_err(|e| Error::CantParseSliceInto(e))
-            .and_then(|b| parse_chunk_id(b))?;
+        let (chunks, unknown_chunks) = parse_chunks(bytes)?;
 
-        let file_size = bytes[4..8]
-            .try_into()
-            .map_err(|e| Error::CantParseSliceInto(e))
-            .map(|b| u32::from_le_bytes(b))?;
+        let mut data = Err(Error::NoDataChunkFound);
+        let mut header = Err(Error::NoFmtChunkFound);
 
-        if riff != ChunkID::RIFF {
-            return Err(Error::NoRiffChunkFound);
+        for chunk in chunks {
+            match chunk {
+                Chunk::FMT(h) => header = Ok(h),
+                Chunk::DATA(d) => data = Ok(d),
+                // ignore unknown chunks
+                Chunk::Unknown(_, _) => (),
+            }
         }
 
-        parse_chunks(&bytes[12..file_size as usize + 8])
+        let wave = Wave {
+            data: data?,
+            header: header?,
+            unknown_chunks,
+        };
+
+        Ok(wave)
     }
 }
 
