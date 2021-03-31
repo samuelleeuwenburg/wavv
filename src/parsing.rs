@@ -5,7 +5,7 @@ use core::convert::TryInto;
 
 // @TODO: https://exiftool.org/TagNames/RIFF.html#Info
 #[derive(Debug, PartialEq, Clone)]
-pub enum ChunkID {
+pub enum ChunkId {
     RIFF,
     FMT,
     LIST,
@@ -13,19 +13,20 @@ pub enum ChunkID {
     JUNK,
     WAVE,
     INFO,
+    Other([u8; 4]),
 }
 
-impl ChunkID {
-    fn from_bytes(bytes: &[u8; 4]) -> Result<ChunkID, Error> {
+impl ChunkId {
+    pub fn from_bytes(bytes: &[u8; 4]) -> ChunkId {
         match bytes {
-            [b'R', b'I', b'F', b'F'] => Ok(ChunkID::RIFF),
-            [b'f', b'm', b't', b' '] => Ok(ChunkID::FMT),
-            [b'L', b'I', b'S', b'T'] => Ok(ChunkID::LIST),
-            [b'd', b'a', b't', b'a'] => Ok(ChunkID::DATA),
-            [b'J', b'U', b'N', b'K'] => Ok(ChunkID::JUNK),
-            [b'W', b'A', b'V', b'E'] => Ok(ChunkID::WAVE),
-            [b'I', b'N', b'F', b'O'] => Ok(ChunkID::INFO),
-            _ => Err(Error::UnknownChunkID(bytes.clone())),
+            [b'R', b'I', b'F', b'F'] => ChunkId::RIFF,
+            [b'f', b'm', b't', b' '] => ChunkId::FMT,
+            [b'L', b'I', b'S', b'T'] => ChunkId::LIST,
+            [b'd', b'a', b't', b'a'] => ChunkId::DATA,
+            [b'J', b'U', b'N', b'K'] => ChunkId::JUNK,
+            [b'W', b'A', b'V', b'E'] => ChunkId::WAVE,
+            [b'I', b'N', b'F', b'O'] => ChunkId::INFO,
+            _ => ChunkId::Other(bytes.clone()),
         }
     }
 }
@@ -34,34 +35,40 @@ impl ChunkID {
 pub enum Chunk {
     FMT(Header),
     DATA(Samples),
-    LIST((Vec<Chunk>, Option<Vec<Chunk>>)),
-    Unknown(ChunkID, Vec<u8>),
+    LIST((ChunkId, Vec<Chunk>)),
+    Unknown(ChunkId, Vec<u8>),
 }
 
 impl Chunk {
-    fn from_bytes_with_id_and_header(
+    pub fn from_bytes_with_id_and_header(
         header: &Header,
-        id: &ChunkID,
+        id: &ChunkId,
         bytes: &[u8],
-    ) -> Result<Option<Chunk>, Error> {
+    ) -> Result<Chunk, Error> {
         let chunk = match id {
-            ChunkID::DATA => {
+            ChunkId::DATA => {
                 let samples = Samples::from_bytes(header, bytes)?;
-                Some(Chunk::DATA(samples))
+                Chunk::DATA(samples)
             }
-            ChunkID::LIST => {
-                let (chunks, unknown_chunks) = parse_chunks2(header, bytes)?;
-                Some(Chunk::LIST((chunks, unknown_chunks)))
+            ChunkId::LIST => {
+                let chunk_id = bytes[0..4]
+                    .try_into()
+                    .map_err(|e| Error::CantParseSliceInto(e))
+                    .map(ChunkId::from_bytes)?;
+
+                let chunk = parse_chunks(header, &bytes[4..])?;
+
+                Chunk::LIST((chunk_id, chunk))
             }
-            _ => None,
+            _ => Chunk::Unknown(id.clone(), bytes.into()),
         };
 
         Ok(chunk)
     }
 
-    fn from_bytes_with_id(id: &ChunkID, bytes: &[u8]) -> Result<Option<Chunk>, Error> {
+    pub fn from_bytes_with_id(id: &ChunkId, bytes: &[u8]) -> Result<Option<Chunk>, Error> {
         let chunk = match id {
-            ChunkID::FMT => {
+            ChunkId::FMT => {
                 let header = Header::from_bytes(bytes)?;
                 Some(Chunk::FMT(header))
             }
@@ -72,35 +79,8 @@ impl Chunk {
     }
 }
 
-pub fn parse_chunks(bytes: &[u8]) -> Result<(Vec<Chunk>, Option<Vec<Chunk>>), Error> {
-    let (chunk_id, wave_data, _) = parse_chunk(bytes)?;
-
-    if chunk_id != ChunkID::RIFF {
-        return Err(Error::NoRiffChunkFound);
-    }
-
-    let (chunk_id, fmt_data, tail) = parse_chunk(wave_data)?;
-
-    let first_chunk = Chunk::from_bytes_with_id(&chunk_id, fmt_data)?
-        .ok_or(Error::CantParseChunk(chunk_id.clone()))?;
-
-    let header = match &first_chunk {
-        Chunk::FMT(header) => Ok(header.clone()),
-        _ => return Err(Error::NoRiffChunkFound),
-    }?;
-
-    let (mut chunks, unknown_chunks) = parse_chunks2(&header, &tail)?;
-    chunks.push(first_chunk);
-
-    Ok((chunks, unknown_chunks))
-}
-
-pub fn parse_chunks2(
-    header: &Header,
-    bytes: &[u8],
-) -> Result<(Vec<Chunk>, Option<Vec<Chunk>>), Error> {
+pub fn parse_chunks(header: &Header, bytes: &[u8]) -> Result<Vec<Chunk>, Error> {
     let mut chunks = vec![];
-    let mut unknown_chunks: Option<Vec<Chunk>> = None;
     let mut tail = bytes;
 
     loop {
@@ -108,43 +88,29 @@ pub fn parse_chunks2(
             break;
         }
 
-        // @TODO: handle unknown chunkID because there are too many
         let (chunk_id, chunk_bytes, new_tail) = parse_chunk(tail)?;
         tail = new_tail;
 
-        match Chunk::from_bytes_with_id_and_header(&header, &chunk_id, chunk_bytes)? {
-            Some(chunk) => chunks.push(chunk),
-            None => {
-                let chunk = Chunk::Unknown(chunk_id.clone(), chunk_bytes.into());
-                match unknown_chunks.as_mut() {
-                    Some(v) => v.push(chunk),
-                    None => {
-                        unknown_chunks.replace(vec![chunk]);
-                    }
-                }
-            }
-        }
+        let chunk = Chunk::from_bytes_with_id_and_header(&header, &chunk_id, chunk_bytes)?;
+        chunks.push(chunk);
     }
 
-    Ok((chunks, unknown_chunks))
+    Ok(chunks)
 }
 
-fn parse_chunk(bytes: &[u8]) -> Result<(ChunkID, &[u8], &[u8]), Error> {
+pub fn parse_chunk(bytes: &[u8]) -> Result<(ChunkId, &[u8], &[u8]), Error> {
     let chunk_id = bytes[0..4]
         .try_into()
         .map_err(|e| Error::CantParseSliceInto(e))
-        .and_then(ChunkID::from_bytes)?;
+        .map(ChunkId::from_bytes)?;
 
     let chunk_size = bytes[4..8]
         .try_into()
         .map_err(|e| Error::CantParseSliceInto(e))
         .map(|b| u32::from_le_bytes(b))?;
 
-    let (start, end) = match chunk_id {
-        ChunkID::RIFF => (12, 8 + chunk_size as usize),
-        ChunkID::LIST => (12, 8 + chunk_size as usize),
-        _ => (8, 8 + chunk_size as usize),
-    };
+    let start = 8;
+    let end = 8 + chunk_size as usize;
 
     Ok((chunk_id, &bytes[start..end], &bytes[end..]))
 }
