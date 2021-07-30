@@ -1,4 +1,4 @@
-use crate::parsing::{parse_chunks, Chunk, ChunkID};
+use crate::parsing::{parse_chunk, parse_chunks, Chunk, ChunkId};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::array::TryFromSliceError;
@@ -12,9 +12,13 @@ pub enum Error {
     /// Failed parsing slice into specific bytes
     CantParseSliceInto(TryFromSliceError),
     /// Failed parsing chunk with given id
-    CantParseChunk(ChunkID),
-    /// no data chunk found in file
+    CantParseChunk(ChunkId),
+    /// Failed parsing meta data chunk
+    CantParseMetaDataChunk,
+    /// no riff chunk found in file, probably not a valid RIFF file
     NoRiffChunkFound,
+    /// no wave id found in file, probably not a valid WAV file
+    NoWaveIdFound,
     /// no data chunk found in file
     NoDataChunkFound,
     /// no fmt/header chunk found in file
@@ -202,8 +206,8 @@ pub struct Wave {
     pub header: Header,
     /// Contains audio data as samples of a fixed bit depth
     pub data: Samples,
-    /// Contains raw chunk data that is either unimplemented or unknown
-    pub unknown_chunks: Option<Vec<Chunk>>,
+    /// Contains metadata
+    pub metadata: Option<Vec<Chunk>>,
 }
 
 impl Wave {
@@ -226,24 +230,56 @@ impl Wave {
     /// }
     /// ```
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let (chunks, unknown_chunks) = parse_chunks(bytes)?;
+        let (chunk_id, wave_data, _) = parse_chunk(bytes)?;
+
+        let wave_chunk_id = wave_data[0..4]
+            .try_into()
+            .map_err(|e| Error::CantParseSliceInto(e))
+            .map(ChunkId::from_bytes)?;
+
+        if chunk_id != ChunkId::RIFF {
+            return Err(Error::NoRiffChunkFound);
+        }
+
+        if wave_chunk_id != ChunkId::WAVE {
+            return Err(Error::NoWaveIdFound);
+        }
+
+        let (chunk_id, fmt_data, tail) = parse_chunk(&wave_data[4..])?;
+
+        let header_chunk = Chunk::from_bytes_with_id(&chunk_id, fmt_data)?
+            .ok_or(Error::CantParseChunk(chunk_id.clone()))?;
+
+        let header = match &header_chunk {
+            Chunk::FMT(header) => Ok(header.clone()),
+            _ => return Err(Error::NoRiffChunkFound),
+        }?;
+
+        let mut chunks = parse_chunks(&header, &tail)?;
+        chunks.push(header_chunk);
 
         let mut data = Err(Error::NoDataChunkFound);
         let mut header = Err(Error::NoFmtChunkFound);
+        let mut metadata = None;
 
         for chunk in chunks {
             match chunk {
                 Chunk::FMT(h) => header = Ok(h),
                 Chunk::DATA(d) => data = Ok(d),
+                Chunk::LIST(id, ch) => match id {
+                    ChunkId::INFO => metadata = Some(ch),
+                    _ => (),
+                },
                 // ignore unknown chunks
                 Chunk::Unknown(_, _) => (),
+                _ => (),
             }
         }
 
         let wave = Wave {
             data: data?,
             header: header?,
-            unknown_chunks,
+            metadata,
         };
 
         Ok(wave)

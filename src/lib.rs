@@ -28,7 +28,8 @@
 
 extern crate alloc;
 
-mod parsing;
 mod wave;
+mod parsing;
 
+pub use parsing::{ChunkId, Chunk};
 pub use wave::{Error, Header, Samples, Wave};
