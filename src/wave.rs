@@ -13,6 +13,8 @@ pub enum Error {
     CantParseSliceInto(TryFromSliceError),
     /// Failed parsing chunk with given id
     CantParseChunk(ChunkId),
+    /// Failed parsing meta data chunk
+    CantParseMetaDataChunk,
     /// no riff chunk found in file, probably not a valid RIFF file
     NoRiffChunkFound,
     /// no wave id found in file, probably not a valid WAV file
@@ -204,6 +206,8 @@ pub struct Wave {
     pub header: Header,
     /// Contains audio data as samples of a fixed bit depth
     pub data: Samples,
+    /// Contains metadata
+    pub metadata: Option<Vec<Chunk>>,
 }
 
 impl Wave {
@@ -256,20 +260,26 @@ impl Wave {
 
         let mut data = Err(Error::NoDataChunkFound);
         let mut header = Err(Error::NoFmtChunkFound);
+        let mut metadata = None;
 
         for chunk in chunks {
             match chunk {
                 Chunk::FMT(h) => header = Ok(h),
                 Chunk::DATA(d) => data = Ok(d),
-                Chunk::LIST(_) => (),
+                Chunk::LIST(id, ch) => match id {
+                    ChunkId::INFO => metadata = Some(ch),
+                    _ => (),
+                },
                 // ignore unknown chunks
                 Chunk::Unknown(_, _) => (),
+                _ => (),
             }
         }
 
         let wave = Wave {
             data: data?,
             header: header?,
+            metadata,
         };
 
         Ok(wave)

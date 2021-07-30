@@ -1,22 +1,52 @@
 use crate::wave::{Error, Header, Samples};
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::convert::TryInto;
 
-// @TODO: https://exiftool.org/TagNames/RIFF.html#Info
+/// 4 byte chunk IDs used in RIFF files to describe various sections of data
 #[derive(Debug, PartialEq, Clone)]
 pub enum ChunkId {
+    /// RIFF file header
     RIFF,
+    /// FMT header containing wave file data
     FMT,
+    /// RIFF list chunk containing an id and list of chunks
     LIST,
+    /// Audio data
     DATA,
+    /// Junk data
     JUNK,
+    /// WAVE data
     WAVE,
+    /// Info list, containing metadata
     INFO,
+    /// Track title
+    INAM,
+    /// Artist
+    IART,
+    /// Album title
+    IPRD,
+    /// Software used to create the file
+    ISFT,
+    /// Creation date (YYYY-MM-DD or YYYY)
+    ITCH,
+    /// Genre
+    IGNR,
+    /// Secondary genre
+    ISGN,
+    /// Copywright information
+    ICOP,
+    /// Track number
+    TRCK,
+    /// Length
+    TLEN,
+    /// Unimplemented or unknow chunk id
     Other([u8; 4]),
 }
 
 impl ChunkId {
+    /// Parse raw bytes into [`ChunkId`]
     pub fn from_bytes(bytes: &[u8; 4]) -> ChunkId {
         match bytes {
             [b'R', b'I', b'F', b'F'] => ChunkId::RIFF,
@@ -26,20 +56,32 @@ impl ChunkId {
             [b'J', b'U', b'N', b'K'] => ChunkId::JUNK,
             [b'W', b'A', b'V', b'E'] => ChunkId::WAVE,
             [b'I', b'N', b'F', b'O'] => ChunkId::INFO,
+            [b'I', b'N', b'A', b'M'] => ChunkId::INAM,
+            [b'I', b'A', b'R', b'T'] => ChunkId::INAM,
+            [b'I', b'P', b'R', b'D'] => ChunkId::IPRD,
+            [b'I', b'S', b'F', b'T'] => ChunkId::ISFT,
             _ => ChunkId::Other(bytes.clone()),
         }
     }
 }
 
+/// Enum describing various .wav file data relationships
 #[derive(Debug)]
 pub enum Chunk {
+    /// [`ChunkId::FMT`] containing header data
     FMT(Header),
+    /// [`ChunkId::DATA`] containing sample data
     DATA(Samples),
-    LIST((ChunkId, Vec<Chunk>)),
+    /// [`ChunkId::LIST`] containing other chunks
+    LIST(ChunkId, Vec<Chunk>),
+    /// [`ChunkId::INFO`] containing pairs of [`ChunkId`] combined with string data
+    INFO(Vec<(ChunkId, String)>),
+    /// Unkown or (most likely) unimplemented [`ChunkId`], containing raw bytes
     Unknown(ChunkId, Vec<u8>),
 }
 
 impl Chunk {
+    /// attempt to parse bytes into valid [`Chunk`] based on [`ChunkId`] and [`Header`]
     pub fn from_bytes_with_id_and_header(
         header: &Header,
         id: &ChunkId,
@@ -56,16 +98,18 @@ impl Chunk {
                     .map_err(|e| Error::CantParseSliceInto(e))
                     .map(ChunkId::from_bytes)?;
 
-                let chunk = parse_chunks(header, &bytes[4..])?;
+                let chunks = parse_chunks(header, &bytes[4..])?;
 
-                Chunk::LIST((chunk_id, chunk))
+                Chunk::LIST(chunk_id, chunks)
             }
+
             _ => Chunk::Unknown(id.clone(), bytes.into()),
         };
 
         Ok(chunk)
     }
 
+    /// attempt to parse bytes into valid [`Chunk`] based on [`ChunkId`]
     pub fn from_bytes_with_id(id: &ChunkId, bytes: &[u8]) -> Result<Option<Chunk>, Error> {
         let chunk = match id {
             ChunkId::FMT => {
