@@ -1,34 +1,58 @@
-//! Very basic `#![no_std]` library for reading wav files.
+//! Basic `no_std` library for parsing and creating WAV files.
 //!
-//! **NOTE! this library is unfinished, incomplete and still contains bugs!**
-//!
+//! Reading a WAV file:
 //! ```
 //! use std::fs;
 //! use std::path::Path;
-//! use wavv::{Wave, Samples};
+//! use wavv::{Wav, Data};
 //!
 //! fn main() {
-//!     let bytes = fs::read(Path::new("./test_files/sine_stereo_16_48000.wav")).unwrap();
-//! 	let wave = Wave::from_bytes(&bytes).unwrap();
+//!     let bytes = fs::read(Path::new("./test_files/stereo_16_48000.wav")).unwrap();
+//! 	let wav = Wav::from_bytes(&bytes).unwrap();
 //!
-//!     assert_eq!(wave.header.num_channels, 2);
-//!     assert_eq!(wave.header.bit_depth, 16);
-//!     assert_eq!(wave.header.sample_rate, 48_000);
+//!     assert_eq!(wav.fmt.num_channels, 2);
+//!     assert_eq!(wav.fmt.bit_depth, 16);
+//!     assert_eq!(wav.fmt.sample_rate, 48_000);
 //!
-//!     match wave.data {
-//!         Samples::BitDepth8(samples) => println!("{:?}", samples),
-//!         Samples::BitDepth16(samples) => println!("{:?}", samples),
-//!         Samples::BitDepth24(samples) => println!("{:?}", samples),
+//!     match wav.data {
+//!         Data::BitDepth8(samples) => println!("{:?}", samples),
+//!         Data::BitDepth16(samples) => println!("{:?}", samples),
+//!         Data::BitDepth24(samples) => println!("{:?}", samples),
 //!     }
 //! }
 //! ```
+//!
+//! Writing a WAV file:
+//! ```
+//! use std::fs::File;
+//! use std::io::Write;
+//! use std::path::Path;
+//! use wavv::{Wav, Data};
+//!
+//! fn main() {
+//!     // Enjoy the silence
+//!     let data = Data::BitDepth16(vec![0; 480_000]);
+//! 	let wav = Wav::from_data(data, 48_000, 2);
+//!
+//!     let path = Path::new("output.wav");
+//!     let mut file = File::create(&path).unwrap();
+//!     file.write_all(&wav.to_bytes()).unwrap();
+//! }
+//! ```
 
-#![no_std]
+// #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 
 extern crate alloc;
 
-mod parsing;
-mod wave;
+mod chunk;
+mod data;
+mod error;
+mod fmt;
+mod wav;
 
-pub use wave::{Error, Header, Samples, Wave};
+pub use chunk::{Chunk, ChunkTag};
+pub use data::Data;
+pub use error::Error;
+pub use fmt::Fmt;
+pub use wav::Wav;
